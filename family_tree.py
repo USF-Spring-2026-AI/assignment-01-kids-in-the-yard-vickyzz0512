@@ -223,7 +223,6 @@ class FamilyTree:
             year_born=1950,
             gender="male"
         )
-        self._founder1.set_partner(self._founder2)
         self._family_members.append(self._founder1)
 
     def set_founder2(self):
@@ -233,7 +232,6 @@ class FamilyTree:
             year_born=1950,
             gender="female"
         )
-        self._founder2.set_partner(self._founder1)
         self._family_members.append(self._founder2)
 
     def get_decade(self, year_born):
@@ -257,7 +255,7 @@ class FamilyTree:
             )
         return None
 
-    def generate_children(self, year_born, has_partner=True): # if partners year born is different, then we need to pick one from two partners to determine their number of chidren. we select year_born from elder parent to determine their children number
+    def generate_children(self, year_born, has_partner=True, inherited_last_name=None): # if partners year born is different, then we need to pick one from two partners to determine their number of chidren. we select year_born from elder parent to determine their children number
         decade = self.get_decade(year_born)
         birth_rate = self._factory._birth_marriage[decade]["birth_rate"]
         num_children = random.randint(
@@ -268,13 +266,25 @@ class FamilyTree:
         # a person who does not have a partner or spouse will have 1 child fewer than a person who has a partner or spouse.
         if not has_partner:
             num_children -= 1
-            
+
+        num_children = max(num_children, 0)    
+        earliest = year_born + 25
+        latest = year_born + 45 
+        if num_children > 1:
+            step = (latest - earliest) / (num_children - 1)
+            child_years = [round(earliest + i * step) for i in range(num_children)]
+        elif num_children == 1:
+            child_years = [random.randint(earliest, latest)]
+        else:
+            child_years = []
+
+
         children_list = []
-        for child in range(num_children):
-            child_year_born = year_born + random.randint(25, 45)
+        for child_year_born in child_years:
             children_list.append(
                 self._factory.get_person(
-                    year_born=child_year_born
+                    year_born=child_year_born,
+                    last_name=inherited_last_name
                 )
             )
         
@@ -286,12 +296,23 @@ class FamilyTree:
         if self._founder2 is None:
             self.set_founder2()
 
+        self._founder1.set_partner(self._founder2)
+        self._founder2.set_partner(self._founder1)            
+
         queue = deque([[self._founder1, self._founder2]])
+        inherited_names = {id(self._founder1): "Jones", id(self._founder2): "Jones"}
+
         while queue:
             partners = queue.popleft()
             has_partner = len(partners) > 1
             elder_partner_year_born = max([p.get_year_born() for p in partners])
-            children = self.generate_children(elder_partner_year_born, has_partner)
+
+            parent_inherited = next(
+                (inherited_names.get(id(p)) for p in partners if id(p) in inherited_names),
+                None,
+            )
+
+            children = self.generate_children(elder_partner_year_born, has_partner, inherited_last_name=parent_inherited,)
             
             for child in children:
                 if child.get_year_born() > self._max_year:
@@ -301,12 +322,19 @@ class FamilyTree:
                     partner.add_child(child)
                 
                 self._family_members.append(child)
+
+                if parent_inherited is not None:
+                    inherited_names[id(child)] = parent_inherited
+            
                 child_partner = self.generate_partner(child.get_year_born(), child.get_gender())
                 if child_partner:
-                    self._family_members.append(child_partner)
-                    child.set_partner(child_partner)
-                    child_partner.set_partner(child)
-                    queue.append([child, child_partner])
+                    if child_partner.get_year_born() > self._max_year:
+                        queue.append([child])
+                    else:    
+                        self._family_members.append(child_partner)
+                        child.set_partner(child_partner)
+                        child_partner.set_partner(child)
+                        queue.append([child, child_partner])
                 else:
                     queue.append([child])
                 
@@ -314,8 +342,12 @@ class FamilyTree:
         return len(self._family_members)
         
     def get_total_people_number_by_year(self):
-        family_members_born_year = [person.get_year_born() for person in self._family_members]
-        return pd.Series(family_members_born_year).value_counts().to_dict()
+        decade_counts = {}
+
+        for person in self._family_members:
+            decade_start = (person.get_year_born() // 10) * 10
+            decade_counts[decade_start] = decade_counts.get(decade_start, 0) + 1
+        return dict(sorted(decade_counts.items()))
     
     def get_duplicate_names(self):
         family_members_full_name = [person.get_full_name() for person in self._family_members]
